@@ -1,3 +1,13 @@
+# 获取当前脚本（main.py）的目录
+import os
+import sys
+
+CLI_DIR = os.path.dirname(os.path.abspath(__file__))
+# 获取项目根目录（dev_agent/，即cli/的上级目录）
+PROJECT_ROOT = os.path.dirname(CLI_DIR)
+# 将项目根目录添加到Python搜索路径
+sys.path.append(PROJECT_ROOT)
+
 import click
 from core.agent import DevAgent
 from data.data_loader import DataLoader
