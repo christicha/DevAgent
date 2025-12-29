@@ -1,41 +1,88 @@
+# data/data_loader.py 完整修复版
 import os
-from datasets import load_dataset
 import json
-from config import DATA_CONFIG
+from datasets import load_dataset
+
+# 数据集配置（适配SWE-bench_Lite）
+SWE_BENCH_CONFIG = {
+    "dataset_name": "princeton-nlp/SWE-bench_Lite",
+    "split": "test",
+    "cache_dir": "./data/cache"
+}
 
 
 class DataLoader:
     @staticmethod
-    def load_human_eval():
-        """加载HumanEval代码基准数据集"""
-        dataset = load_dataset("openai_humaneval")
-        return dataset["test"]
-
-    @staticmethod
     def load_swe_bench():
-        """加载SWE-Bench评估数据集"""
-        if os.path.exists(DATA_CONFIG["swe_bench_path"]):
-            with open(DATA_CONFIG["swe_bench_path"], "r") as f:
-                return [json.loads(line) for line in f]
-        # 若本地无数据，可从HuggingFace加载
-        dataset = load_dataset("princeton-nlp/SWE-bench_Lite")
-        return dataset["test"]
+        """加载SWE-bench_Lite数据集，兼容缺失字段"""
+        try:
+            # 创建缓存目录
+            os.makedirs(SWE_BENCH_CONFIG["cache_dir"], exist_ok=True)
+
+            # 从HF Hub加载数据集
+            dataset = load_dataset(
+                SWE_BENCH_CONFIG["dataset_name"],
+                split=SWE_BENCH_CONFIG["split"],
+                cache_dir=SWE_BENCH_CONFIG["cache_dir"]
+            )
+
+            # 第一步：先打印数据集的实际字段（帮助排查字段问题）
+            if len(dataset) > 0:
+                print("=== SWE-bench_Lite 实际字段列表 ===")
+                print(dataset[0].keys())  # 打印第一个实例的所有字段
+
+            # 转换为列表（兼容缺失字段，用get方法设置默认值）
+            swe_bench_data = []
+            for idx, instance in enumerate(dataset):
+                # 核心字段（SWE-bench_Lite必含）
+                core_fields = {
+                    "instance_id": instance.get("instance_id", f"unknown_{idx}"),
+                    "repo": instance.get("repo", "unknown/repo"),
+                    "problem_statement": instance.get("problem_statement", ""),
+                    "patch": instance.get("patch", ""),
+                    "FAIL_TO_PASS": instance.get("FAIL_TO_PASS", ""),
+                    "PASS_TO_PASS": instance.get("PASS_TO_PASS", "")
+                }
+
+                # 可选字段（SWE-bench_Lite可能缺失，设置默认值）
+                optional_fields = {
+                    "base_commit": instance.get("base_commit", "unknown_commit"),
+                    "issue_url": instance.get("issue_url", ""),  # 缺失则为空字符串
+                    "pr_url": instance.get("pr_url", ""),
+                    "hints_text": instance.get("hints_text", "")
+                }
+
+                # 合并字段，避免KeyError
+                processed_instance = {**core_fields, **optional_fields}
+                swe_bench_data.append(processed_instance)
+
+            print(f"\n成功加载{len(swe_bench_data)}个有效SWE-bench_Lite实例")
+            return swe_bench_data
+
+        except Exception as e:
+            raise RuntimeError(f"加载SWE-bench失败：{str(e)}")
 
     @staticmethod
-    def get_sample_task(task_type="code_generation"):
-        """获取示例任务（用于CLI演示）"""
-        if task_type == "code_generation":
+    def get_sample_task(task_type):
+        """获取示例任务（仅使用核心字段，避免缺失字段）"""
+        if task_type == "bug_fix":
+            swe_bench_data = DataLoader.load_swe_bench()
+            if not swe_bench_data:
+                raise ValueError("无有效SWE-bench_Lite实例")
+
+            # 取第一个实例作为示例（仅用核心字段）
+            sample = swe_bench_data[0]
             return {
-                "instruction": "编写一个Python函数，实现快速排序算法，要求处理整数列表，包含边界条件检查",
-                "type": "code_generation"
+                "instruction": f"""修复以下代码仓库的Bug：
+仓库：{sample['repo']}
+问题描述：{sample['problem_statement']}
+要求：
+1. 修复后需让FAIL_TO_PASS中的测试用例全部通过；
+2. 确保PASS_TO_PASS中的测试用例仍保持通过（不引入新Bug）；
+3. 仅返回修复的代码补丁，无需多余内容。""",
+                "task_type": "bug_fix",
+                "original_instance": sample  # 携带处理后的实例（无缺失字段）
             }
-        elif task_type == "bug_fix":
-            return {
-                "instruction": "修复以下Python代码的Bug：\n```python\ndef calculate_average(numbers):\n    total = 0\n    for num in numbers:\n        total += num\n    return total / len(numbers)\n```\n问题：当输入空列表时会抛出ZeroDivisionError",
-                "type": "bug_fix"
-            }
-        elif task_type == "test_writing":
-            return {
-                "instruction": "为以下Python函数编写单元测试：\n```python\ndef is_prime(n):\n    if n <= 1:\n        return False\n    for i in range(2, int(n**0.5) + 1):\n        if n % i == 0:\n            return False\n    return True\n```\n要求覆盖边界条件（如n=0、1、2、质数、非质数）",
-                "type": "test_writing"
-            }
+        else:
+            # 保留原有code_generation/test_writing逻辑（若有）
+            raise NotImplementedError(f"暂不支持任务类型：{task_type}")

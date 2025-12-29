@@ -41,10 +41,21 @@ class DevAgent:
             task_type = "code_generation"
         return task_type
 
-    def execute_task(self, instruction):
-        """执行任务：根据需求理解结果调度对应模块"""
-        task_type = self.understand_requirement(instruction)
-        print(f"[DevAgent] 识别任务类型：{task_type}")
+    def execute_task(self, instruction, task_type=None):
+        """
+        执行任务：兼容显式传参（评估器）和自动识别（原有逻辑）
+        :param instruction: 任务指令
+        :param task_type: 可选，显式指定任务类型（code_generation/test_writing/bug_fix）
+        :return: 标准化结果字典
+        """
+        # 核心修改：优先使用显式传入的task_type，否则自动识别
+        if task_type is None:
+            task_type = self.understand_requirement(instruction)
+        # 确保task_type合法（兜底）
+        if task_type not in ["code_generation", "test_writing", "bug_fix"]:
+            task_type = "code_generation"
+
+        print(f"[DevAgent] 识别/指定任务类型：{task_type}")
 
         if task_type == "code_generation":
             result = self.code_generator.generate_code(instruction)
